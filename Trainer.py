@@ -1,13 +1,12 @@
-import argparse
 import torch
 from torch.utils.data import DataLoader
 import torch.nn as nn
 from torch.optim import Adam, SGD
-import time
 import numpy as np
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 from sklearn.metrics import roc_auc_score, roc_curve, precision_recall_curve, auc
+from tqdm import tqdm
 from Loss import *
 from Visualizer import Visualizer
 
@@ -28,33 +27,32 @@ class ModelTrainer():
     def train(self, criterion, train_loader, num_epochs):
         for epoch in range(0, num_epochs):
             print(f"epoch #{epoch}")
-            self.train_one_epoch(criterion=criterion, train_loader=train_loader)
+            self.train_one_epoch(criterion=criterion, train_loader=train_loader, epoch_id=epoch, num_epochs=num_epochs)
 
     def train_and_validation(self, criterion, train_loader, val_loader, num_epochs):
         for epoch in range(0, num_epochs):
             print(f"epoch #{epoch}")
-            self.train_one_epoch(criterion=criterion, train_loader=train_loader)
-            self.validate(criterion=criterion, val_loader=val_loader)
+            self.train_one_epoch(criterion=criterion, train_loader=train_loader, epoch_id=epoch, num_epochs=num_epochs)
+            self.validate(criterion=criterion, val_loader=val_loader, epoch_id=epoch, num_epochs=num_epochs)
 
-    def train_one_epoch(self, criterion, train_loader):
+    def train_one_epoch(self, criterion, train_loader, epoch_id, num_epochs):
         acc_num = 0
         totel_num = 0
+        pbar = tqdm(train_loader, desc=f"Training Epoch {epoch_id + 1}/{num_epochs}")
         self.model.train()
-        for n_step, data in enumerate(train_loader):
+        for data in pbar:
             feature = self.model(data)
             self.optimizer.zero_grad()
-            loss = criterion(feature, data["label"])
+            loss = criterion(feature, data["result"])
             loss.backward()
             self.optimizer.step()
 
-            with torch.no_grad:
-                prob = torch.softmax(feature, dim=-1)
-                pred = torch.argmax(prob, dim=-1)
-                acc_num += torch.sum(pred == data["label"]).item()
-                totel_num += data["label"].size(0)
+            prob = torch.softmax(feature, dim=-1)
+            pred = torch.argmax(prob, dim=-1)
+            acc_num += torch.sum(pred == data["result"]).item()
+            totel_num += data["result"].shape[0]
 
-            if n_step % 100 == 0:
-                print(f"n_step: {n_step}, Loss: {loss.item()}")
+            pbar.set_postfix(loss = loss.item())
 
         self.train_acc.append(acc_num/totel_num)
 
@@ -62,32 +60,32 @@ class ModelTrainer():
         torch.save(self.model.state_dict(), "./model/epoch_" + str(epoch_ID) + "_model.pt")
         print(f'Model saved to {"./model/epoch_" + str(epoch_ID) + "_model.pt"}')
 
-    def validate(self, criterion, val_loader, model_path=None):
+    def validate(self, criterion, val_loader, epoch_id, num_epochs, model_path=None):
         if not val_loader:
             print("No validation")
             return
-
         if model_path:
             self.model.load(model_path)
-        self.model.eval()  # 设置模型为评估模式
-        print("Start validation")
 
+        pbar = tqdm(val_loader, desc=f"Validation Epoch {epoch_id + 1}/{num_epochs}")
+        self.model.eval()  # 设置模型为评估模式
         acc_num = 0
         totel_num = 0
         with torch.no_grad():
-            for n_step, data in enumerate(val_loader):
+            for data in pbar:
                 feature = self.model(data)
-                loss = criterion(feature, data["label"])
+                loss = criterion(feature, data["result"])
 
                 prob = torch.softmax(feature, dim=-1)
                 pred = torch.argmax(prob, dim=-1)
-                acc_num += torch.sum(pred == data["label"]).item()
-                totel_num += data["label"].size(0)
+                acc_num += torch.sum(pred == data["result"]).item()
+                totel_num += data["result"].shape[0]
+                pbar.set_postfix(loss = loss.item())
 
-                if n_step % 100 == 0:
-                    print(f"n_step: {n_step}, Loss: {loss.item()}")
-            self.val_acc.append(acc_num / totel_num)
+        self.val_acc.append(acc_num / totel_num)
 
+    def get_acc(self):
+        return {"train": self.train_acc, "val": self.val_acc}
 
 if __name__ == "__main__":
     a = []
